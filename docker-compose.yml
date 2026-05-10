@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   catfishapiagg:
-    image: ghcr.io/catfish872/catfishapiagg:latest
+    build: .
     container_name: catfishapiagg_service
 
     ports:
