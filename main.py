@@ -303,7 +303,14 @@ async def update_stats_and_state(
                 log_message(
                     f"熔断触发: 配置项 ID {config.id} 已被禁用，直到 {disabled_until_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-        # --- 5. 轮询状态已在构建尝试队列时提前推进，此处不再更新 ---
+        # --- 5. 仅在成功时更新轮询状态 ---
+        if is_success:
+            if "round_robin_state" not in stats: stats["round_robin_state"] = {}
+            if scheme_name not in stats["round_robin_state"]:
+                stats["round_robin_state"][scheme_name] = {}
+
+            next_index = (success_index_in_group + 1) % len(priority_group) if priority_group else 0
+            stats["round_robin_state"][scheme_name][str(config.priority)] = next_index
 
         # --- 6. 直接在锁内进行无锁的文件写入 ---
         try:
@@ -738,27 +745,6 @@ async def proxy_chat_completions(
         # 轮询排序
         reordered_group = group[next_index:] + group[:next_index]
         attempt_queue.extend(reordered_group)
-
-    # 提前推进轮询状态：本轮从 next_index 开始，下轮从下一个开始
-    async with file_lock:
-        try:
-            if os.path.exists(STATS_FILE):
-                async with aiofiles.open(STATS_FILE, 'r', encoding='utf-8') as f:
-                    locked_stats = json.loads(await f.read() or '{}')
-            else:
-                locked_stats = {}
-            locked_rr = locked_stats.get("round_robin_state", {}).get(scheme_name, {})
-            for priority in sorted(priority_groups.keys()):
-                group = priority_groups[priority]
-                if len(group) > 1:
-                    idx = locked_rr.get(str(priority), 0)
-                    if idx >= len(group):
-                        idx = 0
-                    locked_stats.setdefault("round_robin_state", {}).setdefault(scheme_name, {})[str(priority)] = (idx + 1) % len(group)
-            async with aiofiles.open(STATS_FILE, 'w', encoding='utf-8') as f:
-                await f.write(json.dumps(locked_stats, indent=2, ensure_ascii=False))
-        except Exception as e:
-            log_message(f"提前推进轮询状态时写入失败: {e}")
 
     # --- 3. 循环尝试队列 ---
     last_error = None
