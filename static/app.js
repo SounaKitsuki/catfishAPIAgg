@@ -10,9 +10,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const topBar = document.getElementById("top-bar");
     const appContainer = document.getElementById("app-container");
     const logoutButton = document.getElementById("logout-button");
+    const effectsToggleButtons = document.querySelectorAll("[data-effects-toggle]");
 
     const tabs = document.querySelectorAll(".tab-button");
     const tabContents = document.querySelectorAll(".tab-content");
+    const themeOptions = document.querySelectorAll(".theme-option");
 
     // 配置 Tab
     const configSchemesContainer = document.getElementById("config-schemes-container");
@@ -27,6 +29,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const queryModelsButton = document.getElementById("query-models-button");
     const modelPickerSelect = document.getElementById("model-picker-select");
     const modelQueryStatus = document.getElementById("model-query-status");
+    const configEndpointPresetInput = document.getElementById("config-endpoint-preset");
+    const imageOptionsGroup = document.getElementById("image-options-group");
+    const configImageUpstreamModeInput = document.getElementById("config-image-upstream-mode");
+    const configImageGenerationPathInput = document.getElementById("config-image-generation-path");
+    const configImageEditPathInput = document.getElementById("config-image-edit-path");
+    const configImageTaskPollTimeoutInput = document.getElementById("config-image-task-poll-timeout");
+    const configImageTaskPollIntervalInput = document.getElementById("config-image-task-poll-interval");
+    const configImageCustomReferenceFieldInput = document.getElementById("config-image-custom-reference-field");
+    const configImageCustomReferenceModeInput = document.getElementById("config-image-custom-reference-mode");
+    const imageCustomOptionEls = document.querySelectorAll(".image-custom-option");
     const configUserAgentModeInput = document.getElementById("config-user-agent-mode");
     const configCustomUserAgentInput = document.getElementById("config-custom-user-agent");
     const configFailureThresholdInput = document.getElementById("config-failure-threshold");
@@ -60,6 +72,10 @@ document.addEventListener("DOMContentLoaded", () => {
     let isSyncingLogToggle = false;
 
     const CONFIG_COLLAPSE_STORAGE_KEY = "catfish_config_scheme_collapsed";
+    const THEME_STORAGE_KEY = "catfish_console_theme";
+    const API_KEY_VISIBILITY_STORAGE_KEY = "catfish_show_api_keys";
+    const EFFECTS_STORAGE_KEY = "catfish_frontend_effects_enabled";
+    const ALLOWED_THEMES = ["gpt", "gemini", "claude", "deepseek"];
     const ALLOWED_INJECT_ROLES = ["system", "user", "assistant", "tool"];
 
     const INJECTION_POSITION_LABEL_MAP = {
@@ -96,7 +112,99 @@ document.addEventListener("DOMContentLoaded", () => {
         { key: "tool_choice", type: "string", description: "工具选择策略", defaultValue: null }
     ];
 
+    let showApiKeys = localStorage.getItem(API_KEY_VISIBILITY_STORAGE_KEY) === "true";
+
     // --- 2. 核心功能函数 ---
+
+    function normalizeTheme(theme) {
+        return ALLOWED_THEMES.includes(theme) ? theme : "gpt";
+    }
+
+    function applyTheme(theme, shouldPersist = true) {
+        const normalized = normalizeTheme(theme);
+        document.documentElement.dataset.theme = normalized;
+        themeOptions.forEach(option => {
+            const isActive = option.dataset.themeOption === normalized;
+            option.classList.toggle("active", isActive);
+            option.setAttribute("aria-pressed", String(isActive));
+        });
+        if (shouldPersist) {
+            localStorage.setItem(THEME_STORAGE_KEY, normalized);
+        }
+    }
+
+    function areEffectsEnabled() {
+        return document.documentElement.dataset.effects !== "off";
+    }
+
+    function applyEffectsPreference(enabled, shouldPersist = true) {
+        const normalized = enabled !== false;
+        document.documentElement.dataset.effects = normalized ? "on" : "off";
+        effectsToggleButtons.forEach(button => {
+            button.textContent = normalized ? "特效：开" : "特效：关";
+            button.setAttribute("aria-pressed", String(normalized));
+            button.title = normalized ? "点击关闭前端动画和高成本视觉效果" : "点击开启前端动画和视觉效果";
+        });
+        if (shouldPersist) {
+            localStorage.setItem(EFFECTS_STORAGE_KEY, normalized ? "true" : "false");
+        }
+    }
+
+    function initEffectsPreference() {
+        const savedValue = localStorage.getItem(EFFECTS_STORAGE_KEY);
+        applyEffectsPreference(savedValue !== "false", false);
+        effectsToggleButtons.forEach(button => {
+            button.addEventListener("click", () => {
+                applyEffectsPreference(!areEffectsEnabled());
+            });
+        });
+    }
+
+    function createButtonRipple(event, target) {
+        const rect = target.getBoundingClientRect();
+        const size = Math.max(rect.width, rect.height);
+        const ripple = document.createElement("span");
+        ripple.className = "button-ripple";
+        ripple.style.width = `${size}px`;
+        ripple.style.height = `${size}px`;
+        ripple.style.left = `${event.clientX - rect.left - size / 2}px`;
+        ripple.style.top = `${event.clientY - rect.top - size / 2}px`;
+        target.appendChild(ripple);
+        window.setTimeout(() => ripple.remove(), 950);
+    }
+
+    function initButtonRippleEffects() {
+        document.addEventListener("click", (event) => {
+            if (!areEffectsEnabled()) return;
+            const target = event.target.closest("button, .button");
+            if (!target || target.disabled) return;
+            createButtonRipple(event, target);
+        });
+    }
+
+    function initTheme() {
+        const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY));
+        applyTheme(savedTheme, false);
+        themeOptions.forEach(option => {
+            option.addEventListener("click", () => applyTheme(option.dataset.themeOption));
+        });
+    }
+
+    function maskApiKey(apiKey) {
+        if (!apiKey) return "";
+        if (apiKey.length <= 8) return "••••••••";
+        return `${apiKey.slice(0, 4)}••••••${apiKey.slice(-4)}`;
+    }
+
+    function formatApiKeyForDisplay(apiKey) {
+        return showApiKeys ? (apiKey || "") : maskApiKey(apiKey || "");
+    }
+
+    function setApiKeyVisibility(visible) {
+        showApiKeys = !!visible;
+        localStorage.setItem(API_KEY_VISIBILITY_STORAGE_KEY, String(showApiKeys));
+        loadConfigs();
+    }
 
     async function authedFetch(url, options = {}) {
         if (!adminKey) {
@@ -198,13 +306,14 @@ document.addEventListener("DOMContentLoaded", () => {
                             <tr data-config-id="${config.id}" data-scheme-name="${schemeName}">
                                 <td>${config.priority}</td>
                                 <td><small>${config.url}</small></td>
-                                <td><small>sk-*****${config.api_key.slice(-4)}</small></td>
+                                <td><small>${formatApiKeyForDisplay(config.api_key)}</small></td>
                                 <td>${config.model || '<em>(使用原始)</em>'}</td>
                                 <td>
                                     ${config.consecutive_failure_threshold ? `<strong>${config.consecutive_failure_threshold}次</strong> / ${config.disable_duration_seconds}s` : '<em>(未设置)</em>'}
                                 </td>
                                 <td>${config.max_retries ?? 0}</td>
                                 <td><small>${formatStreamModeStrategy(config.stream_mode_strategy)}</small></td>
+                                <td><small>${formatEndpointPreset(config.endpoint_preset)}${formatImageMode(config)}</small></td>
                                 <td><small>${formatUserAgentMode(config)}</small></td>
                                 <td><small>${formatInjectionSummary(config)}</small></td>
                                 <td><small>${formatOverridesSummary(config.request_overrides)}</small></td>
@@ -217,15 +326,20 @@ document.addEventListener("DOMContentLoaded", () => {
                         `;
                     });
                 } else {
-                    tableRows = `<tr><td colspan="12">该方案下没有配置项</td></tr>`;
+                    tableRows = `<tr><td colspan="13">该方案下没有配置项</td></tr>`;
                 }
 
                 schemeBlock.innerHTML = `
                     <div class="scheme-header">
                         <h3 class="scheme-title">${schemeName} <small>(Model Name)</small></h3>
-                        <button type="button" class="button button-secondary scheme-toggle-btn" data-scheme-name="${schemeName}">
-                            ${isCollapsed ? "展开" : "收起"}
-                        </button>
+                        <div class="scheme-header-actions">
+                            <button type="button" class="button button-secondary api-key-visibility-btn">
+                                ${showApiKeys ? "隐藏 API Key" : "显示 API Key"}
+                            </button>
+                            <button type="button" class="button button-secondary scheme-toggle-btn" data-scheme-name="${schemeName}">
+                                ${isCollapsed ? "展开" : "收起"}
+                            </button>
+                        </div>
                     </div>
                     <div class="table-container scheme-content ${isCollapsed ? "hidden" : ""}">
                         <table>
@@ -233,11 +347,12 @@ document.addEventListener("DOMContentLoaded", () => {
                                 <tr>
                                     <th>优先级</th>
                                     <th>URL</th>
-                                    <th>Key (遮罩)</th>
+                                    <th>API Key</th>
                                     <th>覆盖 Model</th>
                                     <th>熔断设置 (失败/时长)</th>
                                     <th>重试次数</th>
                                     <th>流模式策略</th>
+                                    <th>预设端点</th>
                                     <th>UA 模式</th>
                                     <th>注入策略</th>
                                     <th>强制覆盖参数</th>
@@ -250,6 +365,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     </div>
                 `;
                 configSchemesContainer.appendChild(schemeBlock);
+            });
+
+            configSchemesContainer.querySelectorAll('.api-key-visibility-btn').forEach(btn => {
+                btn.addEventListener('click', () => setApiKeyVisibility(!showApiKeys));
             });
 
             configSchemesContainer.querySelectorAll('.scheme-toggle-btn').forEach(btn => {
@@ -313,7 +432,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function renderStatsTable(tbody, configs, statsData, isTotal) {
         tbody.innerHTML = "";
         if (configs.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="${isTotal ? 6 : 4}">没有配置项</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="${isTotal ? 7 : 4}">没有配置项</td></tr>`;
             return;
         }
 
@@ -327,15 +446,38 @@ document.addEventListener("DOMContentLoaded", () => {
                 <td class="fail-text">${configStat.fail || 0}</td>
             `;
             if (isTotal) {
-                const disabledUntil = configStat.disabled_until ? new Date(configStat.disabled_until).toLocaleString() : '<em>-</em>';
+                const isBlocked = Boolean(configStat.disabled_until);
+                const disabledUntil = isBlocked ? new Date(configStat.disabled_until).toLocaleString() : '<em>-</em>';
+                const unblockButton = isBlocked
+                    ? `<button type="button" class="button button-secondary unblock-config-btn" data-config-id="${config.id}">解除禁用</button>`
+                    : '<em>-</em>';
                 rowHTML += `
                     <td>${configStat.consecutive_fails || 0}</td>
                     <td><small>${disabledUntil}</small></td>
+                    <td>${unblockButton}</td>
                 `;
             }
             tr.innerHTML = rowHTML;
             tbody.appendChild(tr);
         });
+    }
+
+    async function unblockConfig(configId) {
+        if (!configId) return;
+        try {
+            const response = await authedFetch(`/admin/stats/config/${encodeURIComponent(configId)}/unblock`, {
+                method: "POST"
+            });
+            if (!response) return;
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || `HTTP ${response.status}`);
+            }
+            await loadStats();
+        } catch (err) {
+            console.error("解除熔断失败:", err);
+            alert(`解除禁用失败: ${err.message}`);
+        }
     }
 
 
@@ -400,12 +542,22 @@ document.addEventListener("DOMContentLoaded", () => {
         configSchemeInput.disabled = false;
         configMaxRetriesInput.value = "0";
         configInjectionPositionInput.value = "prepend";
+        configEndpointPresetInput.value = "chat_completions";
         configUserAgentModeInput.value = "aggregator";
         configCustomUserAgentInput.value = "";
         updateCustomUserAgentVisibility();
+        updateImageOptionsVisibility();
         resetModelPicker("先查询后选择模型");
         configStreamModeStrategyInput.value = "passthrough";
         configRequestOverridesInput.value = "{}";
+        configImageUpstreamModeInput.value = "generation_reference_images_array";
+        configImageGenerationPathInput.value = "/images/generations";
+        configImageEditPathInput.value = "/images/edits";
+        configImageTaskPollTimeoutInput.value = "300";
+        configImageTaskPollIntervalInput.value = "2";
+        configImageCustomReferenceFieldInput.value = "";
+        configImageCustomReferenceModeInput.value = "array";
+        updateImageOptionsVisibility();
         renderInjectedMessagesEditor([]);
         cancelButton.classList.add("hidden");
     }
@@ -425,14 +577,23 @@ document.addEventListener("DOMContentLoaded", () => {
         configMaxRetriesInput.value = config.max_retries ?? 0;
         configRequestOverridesInput.value = JSON.stringify(config.request_overrides || {}, null, 2);
         configInjectionPositionInput.value = config.injection_position || "prepend";
+        configEndpointPresetInput.value = config.endpoint_preset || "chat_completions";
         configUserAgentModeInput.value = config.user_agent_mode || "aggregator";
         configCustomUserAgentInput.value = config.custom_user_agent || "";
         updateCustomUserAgentVisibility();
+        configImageUpstreamModeInput.value = config.image_upstream_mode || "generation_reference_images_array";
+        configImageGenerationPathInput.value = config.image_generation_path || "/images/generations";
+        configImageEditPathInput.value = config.image_edit_path || "/images/edits";
+        configImageTaskPollTimeoutInput.value = config.image_task_poll_timeout_seconds ?? 300;
+        configImageTaskPollIntervalInput.value = config.image_task_poll_interval_seconds ?? 2;
+        configImageCustomReferenceFieldInput.value = config.image_custom_reference_field || "";
+        configImageCustomReferenceModeInput.value = config.image_custom_reference_mode || "array";
+        updateImageOptionsVisibility();
         resetModelPicker("可查询并选择该 URL 下的模型");
         configStreamModeStrategyInput.value = config.stream_mode_strategy || "passthrough";
         renderInjectedMessagesEditor(config.injected_messages || [], config.injection_position || "prepend");
         cancelButton.classList.remove("hidden");
-        configForm.scrollIntoView({ behavior: "smooth" });
+        configForm.scrollIntoView({ behavior: areEffectsEnabled() ? "smooth" : "auto", block: "start" });
     }
 
     // [重构] 处理表单提交
@@ -469,9 +630,17 @@ document.addEventListener("DOMContentLoaded", () => {
             max_retries: maxRetries,
             request_overrides: requestOverrides,
             injection_position: configInjectionPositionInput.value || "prepend",
+            endpoint_preset: configEndpointPresetInput.value || "chat_completions",
             user_agent_mode: configUserAgentModeInput.value || "aggregator",
             custom_user_agent: configCustomUserAgentInput.value || null,
             stream_mode_strategy: configStreamModeStrategyInput.value || "passthrough",
+            image_upstream_mode: configImageUpstreamModeInput.value || "generation_reference_images_array",
+            image_generation_path: configImageGenerationPathInput.value || "/images/generations",
+            image_edit_path: configImageEditPathInput.value || "/images/edits",
+            image_custom_reference_field: configImageCustomReferenceFieldInput.value || null,
+            image_custom_reference_mode: configImageCustomReferenceModeInput.value || "array",
+            image_task_poll_timeout_seconds: configImageTaskPollTimeoutInput.value ? parseInt(configImageTaskPollTimeoutInput.value, 10) : 300,
+            image_task_poll_interval_seconds: configImageTaskPollIntervalInput.value ? parseFloat(configImageTaskPollIntervalInput.value) : 2,
             injected_messages: getInjectedMessagesFromEditor(),
             consecutive_failure_threshold: configFailureThresholdInput.value ? parseInt(configFailureThresholdInput.value, 10) : null,
             disable_duration_seconds: configDisableDurationInput.value ? parseInt(configDisableDurationInput.value, 10) : null,
@@ -588,6 +757,14 @@ document.addEventListener("DOMContentLoaded", () => {
         modelQueryStatus.classList.toggle("fail-text", !!isError);
     }
 
+    function updateImageOptionsVisibility() {
+        if (!imageOptionsGroup || !configEndpointPresetInput || !configImageUpstreamModeInput) return;
+        const isImagesPreset = configEndpointPresetInput.value === "images_generations";
+        imageOptionsGroup.classList.toggle("hidden", !isImagesPreset);
+        const isCustom = configImageUpstreamModeInput.value === "custom";
+        imageCustomOptionEls.forEach(el => el.classList.toggle("hidden", !isCustom));
+    }
+
     function updateCustomUserAgentVisibility() {
         if (!configCustomUserAgentInput || !configUserAgentModeInput) return;
         const isCustom = configUserAgentModeInput.value === "custom";
@@ -607,6 +784,25 @@ document.addEventListener("DOMContentLoaded", () => {
     function formatStreamModeStrategy(strategy) {
         const normalized = strategy || "passthrough";
         return STREAM_STRATEGY_LABEL_MAP[normalized] || normalized;
+    }
+
+    function formatImageMode(config) {
+        if ((config.endpoint_preset || "chat_completions") !== "images_generations") return "";
+        const mode = config.image_upstream_mode || "generation_reference_images_array";
+        const labelMap = {
+            openai_edit_image: "OpenAI Edit",
+            generation_images_array: "Gen + images[]",
+            generation_ref_assets_array: "Gen + ref_assets[]",
+            generation_reference_images_array: "Gen + reference_images[]",
+            custom: "自定义图片模式"
+        };
+        return ` / ${labelMap[mode] || mode}`;
+    }
+
+    function formatEndpointPreset(preset) {
+        const normalized = preset || "chat_completions";
+        if (normalized === "images_generations") return "Images Generations (/images/generations)";
+        return "Chat Completions (/chat/completions)";
     }
 
     function formatInjectionSummary(config) {
@@ -776,6 +972,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function init() {
+        initEffectsPreference();
+        initButtonRippleEffects();
+        initTheme();
         loginButton.addEventListener("click", handleLogin);
         adminKeyInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") handleLogin();
@@ -791,6 +990,14 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         });
 
+        statsByConfigBody.addEventListener("click", async (e) => {
+            const button = e.target.closest(".unblock-config-btn");
+            if (!button) return;
+            button.disabled = true;
+            button.textContent = "解除中...";
+            await unblockConfig(button.dataset.configId);
+        });
+
         configForm.addEventListener("submit", handleFormSubmit);
         cancelButton.addEventListener("click", resetForm);
         addInjectedMessageButton.addEventListener("click", () => {
@@ -801,6 +1008,8 @@ document.addEventListener("DOMContentLoaded", () => {
             }));
         });
         configUserAgentModeInput.addEventListener("change", updateCustomUserAgentVisibility);
+        configEndpointPresetInput.addEventListener("change", updateImageOptionsVisibility);
+        configImageUpstreamModeInput.addEventListener("change", updateImageOptionsVisibility);
         queryModelsButton.addEventListener("click", handleQueryModels);
         modelPickerSelect.addEventListener("change", () => {
             if (modelPickerSelect.value) {
